@@ -11,28 +11,32 @@ python3 ../a7800-toolkit/tools/disasm.py "Centipede (NTSC) (Atari) (1987) (020EF
 python3 ../a7800-toolkit/tools/verify.py "Centipede (NTSC) (Atari) (1987) (020EFE25).a78" -d src
 ```
 
-Static coverage is **47.7%** as traced code (7814/16384 bytes), plus
-6127 bytes of declared data blocks (graphics sheets + the vector table) --
-**72.9%** accounted for overall, 4443 bytes left as an honest gap (up from
-an apparent 3056 in an earlier pass -- see the retraction below; the true
-number went *up* because a chunk of what had been wrongly claimed as
-graphics turned out to be neither code nor confirmed data). Round-trip is
-byte-identical throughout everything documented here.
+Static coverage is **50.9%** as traced code (8332/16384 bytes), plus
+6315 bytes of declared data blocks -- **89.4%** accounted for overall, 3737
+bytes left as an honest gap (this number has moved around across passes,
+occasionally *up*, as wrong claims got caught and reverted -- see the
+retraction below; treat "% accounted for" as a proxy for "well-understood",
+not a monotonic score to chase). Round-trip is byte-identical throughout
+everything documented here.
 
 Vectors: `IRQ $C2AB` `NMI $D800` `RESET $D804`.
 
-Two passes are folded into this document: the first settled the memory map
+Three passes are folded into this document: the first settled the memory map
 (what's graphics, what's code, what the ROM's tail is); the second, prompted
 by an explicit request to start tracing gameplay logic, caught a real bug in
 the first pass's own conclusions while doing that -- see the retraction
 below before trusting anything about `chr_rom_C000` from an earlier reading
-of this file. Both passes use one long recording (`run-01.inp`, 53700
-frames, of which only the first 26182 are real recorded input -- the rest is
-the game coasting under the last held input). It covers a standard and a
-novice game, all enemy types shot, extra lives, poison-mushroom erratic
-centipede movement, and the bottom-of-screen centipede-looping /
-multi-head-spawn mechanic; it does **not** cover 2-player mode. That gap in
-coverage matters below.
+of this file; the third, a direct continuation ("keep going"), found and
+fixed a *second* instance of the same underlying class of bug (a chunk of
+real code, including a whole DLI handler chain, sitting unreached because a
+RAM-vector target was never declared) and used the code it unlocked to
+confirm the centipede's own position arrays and renderer. All three passes
+use one long recording (`run-01.inp`, 53700 frames, of which only the first
+26182 are real recorded input -- the rest is the game coasting under the
+last held input). It covers a standard and a novice game, all enemy types
+shot, extra lives, poison-mushroom erratic centipede movement, and the
+bottom-of-screen centipede-looping / multi-head-spawn mechanic; it does
+**not** cover 2-player mode. That gap in coverage matters below.
 
 ## Graphics: confirmed sheets, found by walking the live display list
 
@@ -147,8 +151,11 @@ JSR-reached code) is followed by more unclaimed bytes, right up to
 listing targets anything inside it, but the live display-list walk found
 two genuine graphics references landing in it -- `$C9A8` (width 21) and
 `$CEC6` (width 31, running exactly to `sub_CEE5` with zero padding).
-Declared only those two spans as `gfx` blocks; the remaining 1289 bytes
-stays an honest, unconfirmed gap on the same reasoning as `$F4F2`-`$FFFF`.
+Declared only those two spans as `gfx` blocks; most of the rest stays an
+honest, unconfirmed gap on the same reasoning as `$F4F2`-`$FFFF` (a later
+pass, below, reclaimed `$CD16`-`$CEB5` of it as real code once a RAM-vector
+bug was fixed elsewhere -- `$C946`-`$C9A7` and `$CEB6`-`$CEC5` are still
+open).
 
 ## The interrupt vector table
 
@@ -202,8 +209,8 @@ getting extra lives. This is not yet pinned to an exact frame/award moment;
 that would need a tighter, targeted probe around one specific transition.
 
 **Centipede segment count -- well-supported, not fully confirmed.**
-`sub_D8D5` seeds `ram_2119`/`ram_211A`/`ram_211B` from a 4-entry table,
-`dat_D97D` (still a 4-byte gap -- see below), indexed by `ram_1FCB`. Live
+`sub_D8D5` seeds `ram_2119`/`ram_211A`/`ram_211B` (`CentipedeSegTarget`) from
+a 4-entry table, `dat_D97D`, indexed by `ram_1FCB`. Live
 snapshot data shows `ram_2119` counting down cleanly -- `12, 11, 10, 9` --
 then jumping back *up* to `12` (frame 9180 of the recording) and continuing
 down again -- `11, 10, 9, 8, 7, 6` -- for the rest of the session. That
@@ -233,20 +240,86 @@ settling at `1` for the rest of normal play -- more consistent with a
 boot/attract-sequence state index than a value the player sets once and the
 game holds for the whole session. Left unlabeled rather than asserted.
 
+## The `$2000`-`$20FF` dead end, and where the real state lives instead
+
+The obvious hypothesis for a mushroom-field grid was `$2000`-`$20FF` (256
+bytes, changing constantly during live play, nothing in the traced code
+referencing it by name). A PC-tagged write-tap on that exact range
+(`tools/probe-mushroom-writes.lua`) found only 2039 hits, **all in the first
+~3000 frames** -- i.e. boot initialization only, nothing during actual play.
+That contradicted the live snapshot data showing bytes in that range still
+changing at frame 16680+, which meant the write-tap and the snapshot
+couldn't both be reading the same underlying story -- and they weren't: the
+7800 mirrors `$2040`-`$20FF` down to `$0040`-`$00FF` (a documented toolkit
+pitfall, `a7800-toolkit/docs/pitfalls.md`), so ongoing writes during play
+were going through the low-address zero-page form the whole time, invisible
+to a tap watching only the high addresses.
+
+Re-running the snapshot probe over zero page and the stack page instead
+(`tools/probe-ram-snapshots.lua`, now covering `$0000`, `$0100`,
+`$1E00`,`$1F00`,`$2000`,`$2100`,`$2700`) found the real thing: **two clean
+12-byte parallel arrays**, `$00D0`-`$00DB` and `$00E2`-`$00ED`, both
+churning on nearly every one of 500 one-second checkpoints across the whole
+session -- a strong live match for 12 independently-moving objects, i.e. the
+classic 12-segment centipede.
+
+Static reading then confirmed it directly, not just by pattern-matching the
+live churn: `sub_C7FC` (renamed `CentipedeSegRow`/`CentipedeSegCol` in
+`annotations.json`) builds the centipede at wave start, looping while
+`X < ram_0044` and writing both arrays per segment, bounded by
+`CentipedeSegTarget`. Right after the build loop, a branch fires when the
+number of segments actually placed doesn't match the target
+(`rom:C825`) -- a strong candidate for the bottom-of-screen multi-head-spawn
+mechanic, though not yet confirmed against a live frame where it visibly
+fires. Further down, `sub_CD16`/`sub_CD68` -- unlocked by the RAM-vector fix
+below -- read `CentipedeSegRow` directly to place each segment into MARIA's
+per-row display-list zone, which is about as direct a confirmation as static
+code can give for what the live data already suggested.
+
+Poison-mushroom state specifically is still not located. A likely
+candidate, `ram_005C,X` (set alongside `CentipedeSegCol` in the build loop
+via what looks like an LCG-style generator), is noted in `annotations.json`
+but not confirmed.
+
+## A second RAM-vector bug: real code hiding behind `dat_ED41`
+
+The same class of mistake as the `chr_rom_C000` retraction above, caught
+while reading `dat_ED41` (adjacent to the already-resolved `$ED20` gap
+group) looking for mushroom-state code: its first 4 bytes are a genuine
+small table, but everything after that -- about 100 bytes, rendering as
+`.byte` under a `dat_` label because nothing `JSR`/`JMP`s to it -- is real
+code, including a *second*, previously-unknown target for the
+`ram_00F4`/`ram_00F5` NMI-vector pair (`$ED64`, on top of the already-known
+`$C298` and `$ED45`).
+
+`disasm.py`'s `scan_ram_vectors` only tracks `LDA #imm / STA` pairs, and the
+`$ED64` writer uses `LDA`+`LDY` into `STA`+`STY` (a mixed-register form the
+scanner doesn't follow), so declaring `ram_vectors` for `$F4`/`$F5` wasn't
+enough by itself -- `$ED45` and `$ED64` were also added to `entries`
+directly. The unlocked code turned out to be a two-handler DLI ping-pong
+chain (`VEC_ED45` / `sub_ED64`), the same mechanism Ballblazer used: each
+handler sets a different `CTRL`/`CHARBASE` pair (`$C1` vs `$39`) and
+re-arms the *other* handler for the next interrupt, then one of them calls
+`sub_CD16` -- the zone-slot allocator mentioned above. This recovered 519
+bytes of real code in one fix, including the centipede-renders-itself
+confirmation. Lesson generalizes past this ROM: a RAM-vector scan is only as
+complete as the register forms it looks for; a mixed LDA/LDY writer needs
+manual entries the way a pure-LDA one wouldn't.
+
 ## What's still open
 
-* The mushroom-field grid is still unlocated. `$2000`-`$20FF` (256 bytes --
-  the right size for a compact per-cell playfield array) changes constantly
-  during live play, but **nothing in the currently-traced code references
-  it by name or by any literal `#$20` high byte** -- it's being written
-  through a computed pointer set up inside code this project hasn't reached
-  yet. This is exactly where the poison-mushroom mechanic and the
-  bottom-of-screen multi-head-spawn behavior the user specifically watched
-  for almost certainly live, and neither is pinned down yet.
-* Ten small scattered gaps remain outside the two already discussed above,
-  226 bytes total (`$ED20`-`$EDAA` down to `$F168`-`$F16B`) -- candidates
-  for where that mushroom-field code might be hiding, not yet checked one
-  by one.
+* Poison-mushroom state specifically (see above -- `ram_005C,X` is a
+  candidate, not confirmed) and the mushroom sprites' own graphic identity.
+* The bottom-of-screen multi-head-spawn branch (`rom:C825`) is a strong
+  static candidate but hasn't been confirmed against a live frame where it
+  actually fires.
+* `CentipedeSegRow`/`CentipedeSegCol` still don't explain the *shape* of
+  centipede movement (the left-right weave, the turn-at-a-wall/mushroom
+  behavior) -- only where each segment currently is.
+* Six small scattered gaps remain, 653 bytes total (`$C946`-`$C9A7` down to
+  `$CFFB`-`$CFFF`) -- two of them (`$E9AD`-`$E9BB`, `$CFFB`-`$CFFF`) have no
+  live or static evidence at all pointing to either code or data, genuinely
+  open rather than just unexamined.
 * Per-enemy-type behavior (spider, flea, scorpion) and the
   novice-vs-standard gameplay difference are still untraced.
 * 2-player mode is entirely unexercised by any recording so far, which

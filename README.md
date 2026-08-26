@@ -53,13 +53,13 @@ python3 ../a7800-toolkit/tools/disasm.py "Centipede (NTSC) (Atari) (1987) (020EF
 
 ![Coverage map](docs/img/coverage-map.png)
 
-The remaining gap is mostly the two sparsely-touched graphics tails
-(`$F4F2`-`$FFFF` and `$C946`-`$CEE4`) plus a handful of small
-unreached-branch residues scattered through the code -- see
-`docs/FINDINGS.md` for the investigation that ruled out "missed code" for
-both, and for a retraction of an earlier, wrong graphics-block boundary
-caught while tracing gameplay logic (worth reading before trusting any
-`chr_rom_*` claim from a stale copy of this page).
+The remaining gap is mostly one sparsely-touched graphics tail
+(`$F4F2`-`$FFFF`) plus a still-unresolved chunk around `$C9BD`-`$CD15` --
+see `docs/FINDINGS.md` for two separate retractions worth reading before
+trusting a stale copy of this page: an earlier, wrong graphics-block
+boundary caught while tracing gameplay logic, and a second RAM-vector bug
+(a whole DLI handler chain hiding under a label that looked like data)
+found the same way.
 
 ## Reproducing the live findings
 
@@ -89,13 +89,21 @@ particular game raised:
 * `live-slots.lua` walks the live display list to confirm graphics addresses.
 * `probe-gap-readers.lua` PC-tags reads into a byte range to tell a real
   reader from a DMA misattribution artifact.
-* `probe-ram-snapshots.lua` snapshots the boot-cleared RAM pages once a
-  second across a whole recording (keeping only bytes that ever change), so
-  a specific cell's value over time -- lives, score thresholds, state
-  flags -- can be read off directly instead of guessed from static code.
-  Prefer this shape over per-write logging on this ROM: an earlier,
-  per-write version of this probe produced an unworkable 79MB log and never
-  finished the recording in the time available (see `docs/FINDINGS.md`).
+* `probe-ram-snapshots.lua` snapshots RAM (zero page, the stack page, and
+  the boot-cleared high pages -- $2040-$20FF/$2140-$21FF mirror down to
+  $0040-$00FF/$0140-$01FF on this hardware, see `docs/pitfalls.md` in the
+  toolkit) once a second across a whole recording, keeping only bytes that
+  ever change, so a specific cell's value over time -- lives, score
+  thresholds, state flags -- can be read off directly instead of guessed
+  from static code. Prefer this shape over per-write logging on this ROM:
+  an earlier, per-write version of this probe produced an unworkable 79MB
+  log and never finished the recording in the time available (see
+  `docs/FINDINGS.md`).
+* `probe-mushroom-writes.lua` PC-tags writes into a byte range -- unlike
+  the read-tap version, writes to ordinary RAM can't be MARIA DMA
+  misattribution, so every PC it reports is a real writer (used to rule
+  out, not confirm, `$2000`-`$20FF` as the mushroom-field grid -- see
+  `docs/FINDINGS.md`).
 
 ## Layout
 

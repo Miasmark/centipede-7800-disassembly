@@ -1,9 +1,13 @@
 -- Periodic full snapshots (not per-write logging, which produced an
 -- unworkable 2.9M-entry / 79MB log and never finished the recording) of
--- every RAM page ENTRY_Reset clears at boot ($1E00,$1F00,$2000,$2100,$2700),
--- taken every 60 frames (1 second), so gameplay events (lives lost/gained,
--- difficulty, poison-mushroom state, bottom-loop spawns) can be spotted as
--- step changes in a specific byte's value over time.
+-- every RAM page ENTRY_Reset clears at boot ($1E00,$1F00,$2000,$2100,$2700)
+-- plus zero page and the stack page ($0000,$0100 -- $2040-$20FF/$2140-$21FF
+-- mirror down to $0040-$00FF/$0140-$01FF on this hardware, see
+-- a7800-toolkit/docs/pitfalls.md, so a writer using the low-address form is
+-- invisible to a tap on the high addresses alone), taken every 60 frames (1
+-- second), so gameplay events (lives lost/gained, difficulty,
+-- poison-mushroom state, bottom-loop spawns) can be spotted as step changes
+-- in a specific byte's value over time.
 --
 --   mame a7800 -rompath ../bios -cart <rom> -skip_gameinfo -video none \
 --       -sound none -nothrottle -playback run-01.inp \
@@ -18,7 +22,7 @@ local MACHINE = (type(manager.machine) == "function")
                 and manager:machine() or manager.machine
 local mem = MACHINE.devices[":maincpu"].spaces["program"]
 
-local PAGES = {0x1E00, 0x1F00, 0x2000, 0x2100, 0x2700}
+local PAGES = {0x0000, 0x0100, 0x1E00, 0x1F00, 0x2000, 0x2100, 0x2700}
 local F = 0
 local frames = {}
 -- series[page][addr] = { value_at_each_checkpoint... }
@@ -70,7 +74,7 @@ emu.register_frame_done(function()
   F = F + 1
   if F % 60 == 0 then snapshot() end
   if F % 6000 == 0 then dump() end
-  if F >= 53750 then
+  if F >= 30000 then
     dump()
     MACHINE:exit()
   end

@@ -33,5 +33,6 @@ live-slots-out.json
 gap-readers-out.json
 ram-snapshots-out.json
 ram-transitions-out.json
+mushroom-writes-out.json
 
 .DS_Store
