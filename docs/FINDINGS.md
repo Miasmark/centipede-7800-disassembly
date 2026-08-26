@@ -11,22 +11,30 @@ python3 ../a7800-toolkit/tools/disasm.py "Centipede (NTSC) (Atari) (1987) (020EF
 python3 ../a7800-toolkit/tools/verify.py "Centipede (NTSC) (Atari) (1987) (020EFE25).a78" -d src
 ```
 
-Static coverage is **45.1%** as traced code (7383/16384 bytes), plus
-5945 bytes of declared data blocks (graphics sheets + the vector table) --
-**81.3%** accounted for overall, 3056 bytes left as an honest, undivided
-gap. Round-trip is byte-identical throughout everything documented here.
+Static coverage is **47.7%** as traced code (7814/16384 bytes), plus
+6127 bytes of declared data blocks (graphics sheets + the vector table) --
+**72.9%** accounted for overall, 4443 bytes left as an honest gap (up from
+an apparent 3056 in an earlier pass -- see the retraction below; the true
+number went *up* because a chunk of what had been wrongly claimed as
+graphics turned out to be neither code nor confirmed data). Round-trip is
+byte-identical throughout everything documented here.
 
 Vectors: `IRQ $C2AB` `NMI $D800` `RESET $D804`.
 
-This pass focused on getting the memory map settled -- what's graphics,
-what's code, what the ROM's tail actually is -- using one long recording
-(`run-01.inp`, 53700 frames) rather than reading gameplay logic yet. The
-recording covers a standard and a novice game, all enemy types shot, extra
-lives, poison-mushroom erratic centipede movement, and the bottom-of-screen
-centipede-looping / multi-head-spawn mechanic; it does **not** cover
-2-player mode. That gap in coverage matters below.
+Two passes are folded into this document: the first settled the memory map
+(what's graphics, what's code, what the ROM's tail is); the second, prompted
+by an explicit request to start tracing gameplay logic, caught a real bug in
+the first pass's own conclusions while doing that -- see the retraction
+below before trusting anything about `chr_rom_C000` from an earlier reading
+of this file. Both passes use one long recording (`run-01.inp`, 53700
+frames, of which only the first 26182 are real recorded input -- the rest is
+the game coasting under the last held input). It covers a standard and a
+novice game, all enemy types shot, extra lives, poison-mushroom erratic
+centipede movement, and the bottom-of-screen centipede-looping /
+multi-head-spawn mechanic; it does **not** cover 2-player mode. That gap in
+coverage matters below.
 
-## Graphics: two confirmed sheets, found by walking the live display list
+## Graphics: confirmed sheets, found by walking the live display list
 
 Rather than trust `gfx.py`'s render at a guessed width (a known trap -- a
 plausible-looking render at the wrong width is still noise, see
@@ -39,18 +47,55 @@ plus the widest object seen there.
 
 | block | range | mode | how confirmed |
 |---|---|---|---|
-| `chr_rom_C000` | `$C000`-`$CEE4` | indirect | `CHARBASE` confirmed by code, not guess: both writers (`$D88D`, `$EC75`) load `#$C0` immediately before the write. Extent confirmed live -- the display list references addresses right up to `$CEE4`, touching `sub_CEE5` (real code) with no gap. |
-| `GameSpritesB` | `$D000`-`$D7FF` | direct | A second sheet, referenced from all 8 line-planar pages (`$D000`, `$D100`, ... `$D700` -- the standard base+n*256 layout for an 8-line-tall object), real widths seen at every page. Sits between `chr_rom_C000` and `ENTRY_Nmi` (`$D800`) with no gap either side. |
+| `chr_rom_C000` | `$C000`-`$C2AA` | indirect | `CHARBASE` confirmed by code, not guess: both writers (`$D88D`, `$EC75`) load `#$C0` immediately before the write. |
+| `chr_rom_C2AC` | `$C2AC`-`$C797` | indirect | Continuation of the same sheet, resuming right after `ENTRY_Irq`'s single-byte `RTI` (see the retraction below for why this is two blocks, not one). |
+| `gfx_C9A8`, `gfx_CEC6` | `$C9A8`+21, `$CEC6`+31 | indirect | Two small confirmed fragments in the otherwise-unclaimed `$C946`-`$CEE4` gap; `gfx_CEC6` runs exactly up to `sub_CEE5` (real code) with zero padding. |
+| `GameSpritesB` | `$D000`-`$D7FF` | direct | A second sheet, referenced from all 8 line-planar pages (`$D000`, `$D100`, ... `$D700` -- the standard base+n*256 layout for an 8-line-tall object), real widths seen at every page. Sits between `chr_rom_C2AC` and `ENTRY_Nmi` (`$D800`) with no gap either side. |
 
 Neither sheet's *content* (which enemy or effect belongs to which sprite)
 is identified yet -- that needs a screenshot cross-check against a specific
 frame's live display list, not attempted this pass.
 
+## Retraction: `chr_rom_C000` was wrongly declared over a real entry point
+
+An earlier pass (documented in an earlier version of this file, and visible
+in `annotations.json`'s own header note for `rom:C000` if you want the blow
+by blow) extended `chr_rom_C000` from a `C000`-`CEE5` claim -- "the display
+list references addresses right up to `$CEE4`, touching `sub_CEE5` with no
+gap, so it's one continuous sheet." That was accepted without checking
+whether anything *inside* the claimed range was also a call target. It was:
+`$C798`, `$C8AC`, `$C8D5` and `$C8F8` (a sound-effect dispatcher called from
+13 places in the real game loop) are all real code, rendering as
+`dat_`-prefixed labels under `JSR` instructions -- a dead giveaway, in
+hindsight, that should have been checked before trusting the boundary.
+
+The immediate fix (shrinking the block to end at `$C798`) was **itself
+still wrong**, in a worse way: it left the block spanning `ENTRY_Irq`
+(`$C2AB`), the ROM's own hardware-confirmed IRQ vector target. `disasm.py`'s
+`forced_data` check (what a `blocks` entry populates) is tested *before* the
+opcode is even read in the trace loop, and it wins unconditionally over an
+`entries` seed -- so the declared block had been silently suppressing the
+IRQ handler's own disassembly the whole time. The listing showed
+`ENTRY_Irq:` followed by `.byte $40` instead of `RTI`, which should have
+been the tell (a labeled entry point should never render as data), but
+wasn't noticed until gameplay-logic tracing surfaced the `JSR dat_C8F8`
+calls and prompted a closer look at the whole region.
+
+Fixed by removing the block outright, letting the tracer run from the real
+entry points with nothing suppressing it, and re-deriving boundaries only
+from what the unblocked tracer and the live evidence actually agree on:
+`ENTRY_Irq` is genuinely one byte (`RTI` -- this cartridge doesn't use
+POKEY's IRQ features), an isolated code island in the middle of the
+character sheet, which is why the sheet is now two blocks either side of it.
+This is now a toolkit-level pitfall
+(`a7800-toolkit/docs/pitfalls.md`, "A `gfx`/data block silently overrides
+`entries`, even at a confirmed vector") since nothing about it is specific
+to Centipede: any `blocks` entry can hide an entry point the same way.
+
 ## The `$F4F2`-`$FFFF` tail: data, not missed code
 
-This was the ROM's one large remaining gap (2830 of the pre-this-pass 3140
-gap bytes) and the thing this session actually spent its time on. Two
-methods were tried; the second one settled it.
+This was the ROM's largest gap and the thing an earlier pass spent its time
+on. Two methods were tried; the second one settled it.
 
 **Method 1 -- who reads it (failed to find a genuine reader).**
 `tools/probe-gap-readers.lua` installs a PC-tagged read-tap across the
@@ -93,20 +138,116 @@ multi-page or contiguous evidence here yet. A recording that reaches more
 enemy/bonus varieties, or 2-player mode (**not** covered by `run-01.inp`),
 would likely close more of it.
 
+## The `$C946`-`$CEE4` gap
+
+Same shape as `$F4F2`-`$FFFF`, found while re-deriving the `chr_rom_C000`
+boundaries (above): the code interruption at `$C798`-`$C945` (real,
+JSR-reached code) is followed by more unclaimed bytes, right up to
+`sub_CEE5` (real code, reached from `rom:E2FC`). No `JSR`/`JMP` in the whole
+listing targets anything inside it, but the live display-list walk found
+two genuine graphics references landing in it -- `$C9A8` (width 21) and
+`$CEC6` (width 31, running exactly to `sub_CEE5` with zero padding).
+Declared only those two spans as `gfx` blocks; the remaining 1289 bytes
+stays an honest, unconfirmed gap on the same reasoning as `$F4F2`-`$FFFF`.
+
 ## The interrupt vector table
 
 `$FFFA`-`$FFFF`, the standard 6502 NMI/RESET/IRQ vector table. Confirmed by
 agreement, not guessed: the bytes read back as `$D800`/`$D804`/`$C2AB`,
 matching `ENTRY_Nmi`/`ENTRY_Reset`/`ENTRY_Irq` exactly.
 
+## Gameplay logic: main loop, score, and the extra-life mechanism
+
+Prompted by an explicit request to start tracing gameplay logic (rather than
+just the memory map). Two tools were used together: static reading of the
+now-larger traced-code region, and `tools/probe-ram-snapshots.lua` -- a new
+MAME Lua script that snapshots every byte of the five RAM pages `ENTRY_Reset`
+clears at boot (`$1E00`, `$1F00`, `$2000`, `$2100`, `$2700`) once a second
+across the whole recording, keeping only bytes that ever changed, so a
+specific RAM cell's value over time can be read off directly instead of
+guessed from static code alone. (A first attempt logged every individual
+write instead of periodic snapshots and produced an unworkable 2.9M-entry,
+79MB file that didn't even finish the recording in the time available --
+noted here because it's a real trap: on a ROM this write-heavy, per-write
+logging doesn't scale the way it did for the sparser display-list taps used
+elsewhere in this project.)
+
+**Main loop.** `ENTRY_Reset` clears the five RAM pages above, runs a short
+init chain (`sub_DED1`, `sub_D883`, `sub_D871`, `sub_D87A`), then enters
+`sub_D840`: eleven subroutines called in a fixed order every frame
+(`sub_E25E`, `sub_E4F6`, `sub_DA51`, `sub_DEFD`, `sub_DCFF`, `sub_EB74`,
+`sub_EE3B`, `sub_F1D6`, `sub_F476`, `sub_F00F`, `sub_E8FF`), then waits on
+`ram_2108` bit 7 (set by the loop, presumably cleared by the display-list
+interrupt chain reached through `ram_00F4`/`ram_00F5`) before looping. This
+is simpler than Ballblazer's cooperative task-table dispatcher -- a straight
+ordered call list, not an indirect per-frame vector.
+
+**Score.** `ScoreDigitsA`/`B`/`C`/`D` (`$0080`, `$0087`, `$008E`, `$0095`,
+each `+X` for up to 3 slots) hold a 4-byte BCD score, confirmed by the
+arithmetic itself: `sub_DDA9` sets the decimal flag (`SED`) and does
+carry-chained `ADC`s across all four, doubling the add when `ram_2122==3`
+(a bonus-multiplier state, not yet identified further).
+
+**Extra lives -- CONFIRMED mechanism, partially confirmed live.**
+`sub_DDA9` falls through into `sub_DE1C` after every score add:
+`NextLifeThresholdLo`/`Hi` (`$210A`/`$210C`, `+X`) is subtracted from the
+new score; if the score has reached it, the threshold advances by BCD
+`$0120` and, if `ExtraLifeAwardCount` (`$210E`, `+X`) is still under 6 and a
+per-slot "no more bonuses" flag (`ram_00DE,X` bit 6) isn't set, the award
+counter increments -- the actual life award. Live snapshot data for the
+only active slot in this recording (slot 0 -- it's a 1-player game) shows
+`ram_210E` moving through 0/1/2 rather than sitting still, consistent with
+real awards happening during the session, matching the user's report of
+getting extra lives. This is not yet pinned to an exact frame/award moment;
+that would need a tighter, targeted probe around one specific transition.
+
+**Centipede segment count -- well-supported, not fully confirmed.**
+`sub_D8D5` seeds `ram_2119`/`ram_211A`/`ram_211B` from a 4-entry table,
+`dat_D97D` (still a 4-byte gap -- see below), indexed by `ram_1FCB`. Live
+snapshot data shows `ram_2119` counting down cleanly -- `12, 11, 10, 9` --
+then jumping back *up* to `12` (frame 9180 of the recording) and continuing
+down again -- `11, 10, 9, 8, 7, 6` -- for the rest of the session. That
+reset-then-recount shape is a strong match for "segments remaining in the
+current centipede," reset to a fresh count when a wave is cleared and a new
+centipede begins. `ram_211A`/`ram_211B` get the same seed value but never
+move afterward in this recording, so their role is still open.
+
+That frame-9180 reset lines up with two other signals moving at the same
+moment: `ram_2124` bit 7 (otherwise 0 during normal play) goes high from
+roughly frame 8400 to 9180, and `ram_2129` bit 6 pulses briefly (about a
+second, per `rom:DD7E`'s own `AND #$BF` clear) six separate times across the
+whole session at irregular intervals. The cluster around 8400-9180 reads as
+a wave-clear/respawn transition (gameplay paused, segment count reset,
+*something* pulsed) but which of the six `ram_2129` pulses are deaths versus
+wave-clears versus bonus events isn't disentangled yet -- `ram_2122`, which
+several routines compare against `2` and `3`, stays flat at 0 for this
+entire 1-player recording, so it's plausibly a player-turn index that a
+2-player recording would actually exercise.
+
+**`ram_1FCB` is *not* confidently "difficulty" any more.** An early
+hypothesis (visible in `annotations.json`'s comment history) was that this
+is the novice/standard selector, since it seeds the segment-count table at
+boot. Live data doesn't support that as cleanly as hoped: it cycles through
+several small values (`1, 2, 1, 3, 1, 0`) in the first ~150 frames before
+settling at `1` for the rest of normal play -- more consistent with a
+boot/attract-sequence state index than a value the player sets once and the
+game holds for the whole session. Left unlabeled rather than asserted.
+
 ## What's still open
 
-* Ten small scattered gaps remain, 226 bytes total (`$ED20`-`$EDAA` down to
-  `$F168`-`$F16B`) -- ordinary unreached-branch-target residue, not
-  investigated as a group this pass.
-* No gameplay logic has been read yet. The mechanics the recording
-  specifically demonstrates -- poison-mushroom erratic centipede movement,
-  the bottom-of-screen looping/multi-head-spawn mechanic, extra-life
-  awarding, per-enemy-type behavior, and novice-vs-standard differences --
-  are all still to be traced to code.
-* 2-player mode is entirely unexercised by any recording so far.
+* The mushroom-field grid is still unlocated. `$2000`-`$20FF` (256 bytes --
+  the right size for a compact per-cell playfield array) changes constantly
+  during live play, but **nothing in the currently-traced code references
+  it by name or by any literal `#$20` high byte** -- it's being written
+  through a computed pointer set up inside code this project hasn't reached
+  yet. This is exactly where the poison-mushroom mechanic and the
+  bottom-of-screen multi-head-spawn behavior the user specifically watched
+  for almost certainly live, and neither is pinned down yet.
+* Ten small scattered gaps remain outside the two already discussed above,
+  226 bytes total (`$ED20`-`$EDAA` down to `$F168`-`$F16B`) -- candidates
+  for where that mushroom-field code might be hiding, not yet checked one
+  by one.
+* Per-enemy-type behavior (spider, flea, scorpion) and the
+  novice-vs-standard gameplay difference are still untraced.
+* 2-player mode is entirely unexercised by any recording so far, which
+  limits confidence on `ram_2122`/`ram_211A`/`ram_211B` specifically.

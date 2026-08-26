@@ -53,10 +53,13 @@ python3 ../a7800-toolkit/tools/disasm.py "Centipede (NTSC) (Atari) (1987) (020EF
 
 ![Coverage map](docs/img/coverage-map.png)
 
-The remaining gap (bottom, red) is mostly the sparsely-touched graphics
-tail at `$F4F2`-`$FFFF` plus a handful of small unreached-branch residues
-scattered through the code -- see `docs/FINDINGS.md` for the investigation
-that ruled out "missed code" for the large one.
+The remaining gap is mostly the two sparsely-touched graphics tails
+(`$F4F2`-`$FFFF` and `$C946`-`$CEE4`) plus a handful of small
+unreached-branch residues scattered through the code -- see
+`docs/FINDINGS.md` for the investigation that ruled out "missed code" for
+both, and for a retraction of an earlier, wrong graphics-block boundary
+caught while tracing gameplay logic (worth reading before trusting any
+`chr_rom_*` claim from a stale copy of this page).
 
 ## Reproducing the live findings
 
@@ -79,11 +82,20 @@ mame a7800 -rompath /path/to/bios -input_directory . \
   -video none -sound none -nothrottle -str 600
 ```
 
-`tools/` holds this project's own probe scripts (`live-slots.lua` walks the
-live display list to confirm graphics addresses; `probe-gap-readers.lua`
-PC-tags reads into a byte range to tell a real reader from a DMA
-misattribution artifact) -- generic instrument code lives in the toolkit
-itself, these are specific to questions this particular game raised.
+`tools/` holds this project's own probe scripts -- generic instrument code
+lives in the toolkit itself, these are specific to questions this
+particular game raised:
+
+* `live-slots.lua` walks the live display list to confirm graphics addresses.
+* `probe-gap-readers.lua` PC-tags reads into a byte range to tell a real
+  reader from a DMA misattribution artifact.
+* `probe-ram-snapshots.lua` snapshots the boot-cleared RAM pages once a
+  second across a whole recording (keeping only bytes that ever change), so
+  a specific cell's value over time -- lives, score thresholds, state
+  flags -- can be read off directly instead of guessed from static code.
+  Prefer this shape over per-write logging on this ROM: an earlier,
+  per-write version of this probe produced an unworkable 79MB log and never
+  finished the recording in the time available (see `docs/FINDINGS.md`).
 
 ## Layout
 

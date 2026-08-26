@@ -27,9 +27,11 @@
 /cfg/
 
 # Derived analysis manifests -- reproducible from the ROM + recordings via
-# tools/live-slots.lua and tools/probe-gap-readers.lua. Not the primary
-# record (annotations.json and docs/FINDINGS.md are); regenerate as needed.
+# the tools/probe-*.lua scripts and live-slots.lua. Not the primary record
+# (annotations.json and docs/FINDINGS.md are); regenerate as needed.
 live-slots-out.json
 gap-readers-out.json
+ram-snapshots-out.json
+ram-transitions-out.json
 
 .DS_Store

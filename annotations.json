@@ -35,20 +35,55 @@
     "rom:D800": "ENTRY_Nmi",
     "rom:D804": "ENTRY_Reset"
   },
-  "ram": {},
-  "comments": {},
+  "ram": {
+    "80": "ScoreDigitsA",
+    "87": "ScoreDigitsB",
+    "8E": "ScoreDigitsC",
+    "95": "ScoreDigitsD",
+    "210A": "NextLifeThresholdLo",
+    "210C": "NextLifeThresholdHi",
+    "210E": "ExtraLifeAwardCount"
+  },
+  "comments": {
+    "rom:D8D5": "Per-slot init (X=0..2): zeroes ScoreDigitsA/B/C/D (rom:sub_D8D5 -- CONFIRMED score storage: sub_DDA9/sub_DE1C below do SED/ADC BCD arithmetic directly into these four arrays, carrying digit-place to digit-place). Then seeds ram_2119/ram_211A/ram_211B from dat_D97D,X where X=ram_1FCB.",
+    "rom:DDA9": "CONFIRMED (SED at rom:DDAE, BCD arithmetic): adds the caller's A/Y-held BCD point value into ScoreDigitsA/B/C/D for slot X, doubling the add when ram_2122==3 (a bonus-multiplier state). Falls through to sub_DE1C's extra-life check on every score change -- not a separate poll.",
+    "rom:DE1C": "Extra-life threshold check, run after every score add (see rom:DDA9). Subtracts NextLifeThreshold{Lo,Hi},X from the score; if the score has reached it, advances the threshold by BCD $0120 and -- if ExtraLifeAwardCount,X is still under 6 and the ram_00DE,X bit-6 'no more bonuses' flag isn't set -- increments ExtraLifeAwardCount,X (the actual life award). LIVE-OBSERVED (tools/probe-ram-snapshots.lua, run-01.inp): ram_210E (slot 0, the only active slot in this 1-player recording) moves through 0/1/2 across the session rather than sitting still, consistent with real awards happening, matching the user's report of getting extra lives -- not confirmed frame-exact against a specific award moment this pass.",
+    "rom:D840": "The main per-frame loop (jumped back into from rom:D86E after an NMI-synced wait on ram_2108 bit7). Runs, in order: sub_E25E (coin/start-switch and attract-mode front end), sub_E4F6, sub_DA51 (sound-effect trigger checks -- see dat_C8F8), sub_DEFD, sub_DCFF, sub_EB74, sub_EE3B, sub_F1D6, sub_F476, sub_F00F, sub_E8FF. None of these are individually named by content yet except sub_DA51's role, inferred from what it calls."
+  },
   "headers": {
-    "rom:C000": "chr_rom_C000. CONFIRMED (not guessed): both writers of CHARBASE (rom:D88D, rom:EC75) load #$C0 immediately before the write, so this is the real indirect-mode character set base, not just a visual match. gfx.py's default indirect-mode render at $C000 shows a readable digit/letter set followed by recognizable game sprites (mushrooms, centipede segments) -- consistent with the usual Atari convention of packing the font and small object graphics into the same 256-entry character sheet. CONFIRMED LIVE (tools/live-slots.lua, run-01.inp, 53700 frames -- standard and novice games, all enemy types, poison-mushroom erratic movement, extra lives, the bottom-of-screen looping/multi-head spawn): the live display lists reference many addresses from $C804 through $CEE4, right up against sub_CEE5 (real code, already reached) with no gap -- extended the block's end from the original 2048-byte guess to $CEE5 on that evidence. The '©1984 ATARI' copyright text renders inside this same range when read as an indirect-mode grid, alongside more enemy sprite fragments (spider, flea, scorpion pieces) -- one continuous character/sprite sheet, not two.",
-    "rom:D000": "GameSpritesB. CONFIRMED LIVE (tools/live-slots.lua, run-01.inp, same session as chr_rom_C000): a second, separate direct-mode sprite sheet, referenced from all 8 line-planar pages ($D000, $D100, ... $D700 -- the classic base+n*256 pattern for an 8-line-tall object) with real widths seen at every page, not a guess from byte patterns alone. Sits between chr_rom_C000 and ENTRY_Nmi (already-confirmed real code at $D800) with no gap either side. Not yet identified by content (which enemy or effect these specific graphics belong to) -- that needs a screenshot cross-check against a chosen frame's live display list, not attempted this pass.",
+    "rom:C000": "chr_rom_C000/chr_rom_C2AC. CONFIRMED (not guessed): both writers of CHARBASE (rom:D88D, rom:EC75) load #$C0 immediately before the write, so this is the real indirect-mode character set base, not just a visual match. gfx.py's default indirect-mode render at $C000 shows a readable digit/letter set followed by recognizable game sprites. DOUBLE RETRACTION this session, both caught while tracing gameplay logic, both left visible rather than silently fixed: (1) an earlier pass extended this block's end all the way to $CEE5 on the strength of live display-list refs scattered up to $CEE4, reasoning 'one continuous sheet, no gap' -- wrong, it never checked whether anything inside was also a JSR/JMP *target*. rom:C798, rom:C8AC, rom:C8D5 and rom:C8F8 (a heavily-used sound-effect dispatcher, called from 13 places in the real game loop, e.g. sub_DA51) are all real code. (2) the immediate fix (shrinking the block to end at rom:C798) was ITSELF still wrong in a worse way: it left a `gfx:true` declaration spanning ENTRY_Irq (rom:C2AB) -- and disasm.py's forced_data check unconditionally wins over an `entries` seed (see tools/disasm.py's trace loop: `if loc in self.forced_data: break`, checked before the opcode is even read), so the declared block had been silently suppressing the IRQ handler's own disassembly the whole time, label and all -- it showed as `.byte $40` under an `ENTRY_Irq:` label instead of `RTI`. Caught by noticing the entry point rendered as data at all, which should never happen for a hardware-vector-confirmed entry. Fixed by removing the block outright and re-deriving boundaries only from what the unblocked tracer and the live evidence actually agree on: ENTRY_Irq is genuinely one byte (`RTI` -- this cartridge doesn't use POKEY's IRQ features, matching the ROM notes), sitting as an isolated one-byte code island in the middle of the character sheet. The sheet itself is now two blocks either side of it -- chr_rom_C000 ($C000-$C2AA) and chr_rom_C2AC ($C2AC-$C797, tile data through $C796, zero-padded tail, code starts cleanly at $C798) -- both with dense live display-list refs on both sides of the IRQ byte, confirming the split rather than assuming it. Lesson for this ROM specifically: a `gfx:true` block is a hard override, not a hint -- never let one span a confirmed entry point, and after declaring one, grep every `dat_<addr>` label it creates against `J(SR|MP)` in the regenerated listing before trusting the boundary. The '©1984 ATARI' copyright text and enemy sprite fragments render inside the two chr_rom blocks as an indirect-mode grid.",
+    "rom:D000": "GameSpritesB. CONFIRMED LIVE (tools/live-slots.lua, run-01.inp, same session as chr_rom_C000): a second, separate direct-mode sprite sheet, referenced from all 8 line-planar pages ($D000, $D100, ... $D700 -- the classic base+n*256 pattern for an 8-line-tall object) with real widths seen at every page, not a guess from byte patterns alone. Sits between chr_rom_C2AC and ENTRY_Nmi (already-confirmed real code at $D800) with no gap either side. Checked for the same JSR/JMP-into-the-block bug found in chr_rom_C000: none found (grep for `J(SR|MP)\\s+dat_D[0-7]` across the whole listing is empty), so this block's boundary is not suspect the same way. Not yet identified by content (which enemy or effect these specific graphics belong to) -- that needs a screenshot cross-check against a chosen frame's live display list, not attempted this pass.",
+    "rom:C946": "The $C946-$CEE4 gap, right after chr_rom_C2AC's code interruption and right before sub_CEE5 (real code, reached via rom:E2FC). Checked the same way as the F4F2 gap below: no JSR/JMP in the whole listing targets anything inside this range, but the live display-list walk (tools/live-slots.lua, run-01.inp) found two genuine runtime-constructed graphics references landing in it -- $C9A8 (width 21) and $CEC6 (width 31, running exactly to $CEE5 with zero padding, i.e. touching sub_CEE5 with no gap at all). Declared only those two confirmed spans as gfx blocks (gfx_C9A8, gfx_CEC6); the rest of the 1439 bytes stays an honest, unconfirmed gap on the same reasoning as $F4F2-$FFFF -- sparse live evidence inside a range is enough to call its *character* (graphics, not missed code) but not enough to claim the whole span without guessing.",
     "rom:F4F2": "The $F4F2-$FFFF gap. Investigated two ways this session: (1) a PC-tagged read-tap on the whole range (tools/probe-gap-readers.lua, run-01.inp, 1,183,549 hits) -- every representative top-hit PC checked resolved to either a busy-wait loop (rom:D861 BIT ram_2108/BMI L_D861) or an address that falls inside the already-confirmed chr_rom_C000 block (impossible as a real 6502 PC) -- i.e. MARIA DMA misattribution artifacts, not real readers (see docs/pitfalls.md in the toolkit). Trial entries at rom:F900 and rom:F902 both failed to produce a sustained instruction trace. (2) tools/live-slots.lua's own display-list walk -- the same live method that confirmed chr_rom_C000 and GameSpritesB -- found three genuine runtime-constructed graphics-object references landing inside this range: $FE0C (width 31), $FE64 (width 30), $FF24 (width 17); see the gfx_FE0C/gfx_FE64/gfx_FF24 blocks. Conclusion: this is a graphics region, not unreached code -- but run-01.inp only exercised a small fraction of it (3 confirmed starts out of 2830 bytes), so most of the range stays an honest, unconfirmed gap rather than a guessed block. A recording that reaches more enemy/bonus varieties, or 2-player mode, would likely close more of it."
   },
   "blocks": [
     {
       "loc": "rom:C000",
-      "end": "rom:CEE5",
+      "end": "rom:C2AB",
       "gfx": true,
       "name": "chr_rom_C000",
-      "note": "Character set + small object sprites, indirect-mode. See the header note for how the base address and full extent were confirmed live, not guessed."
+      "note": "Character/sprite tile data, indirect-mode. Ends exactly where ENTRY_Irq's single RTI byte begins. See the header note -- this boundary replaces two earlier, wrong versions."
+    },
+    {
+      "loc": "rom:C2AC",
+      "end": "rom:C798",
+      "gfx": true,
+      "name": "chr_rom_C2AC",
+      "note": "Continuation of the tile sheet, resuming right after ENTRY_Irq's single RTI byte. Ends at $C797 (zero-padded tail); code (sub_C798) starts cleanly at $C798. See the header note."
+    },
+    {
+      "loc": "rom:C9A8",
+      "end": "rom:C9BD",
+      "gfx": true,
+      "name": "gfx_C9A8",
+      "note": "CONFIRMED LIVE (tools/live-slots.lua, run-01.inp), width 21. See the rom:C946 header note."
+    },
+    {
+      "loc": "rom:CEC6",
+      "end": "rom:CEE5",
+      "gfx": true,
+      "name": "gfx_CEC6",
+      "note": "CONFIRMED LIVE (tools/live-slots.lua, run-01.inp), width 31, runs exactly up to sub_CEE5 (real code) with zero padding in between. See the rom:C946 header note."
     },
     {
       "loc": "rom:D000",
