@@ -1,0 +1,91 @@
+{
+  "_README": [
+    "Started by init.py from Centipede (NTSC) (Atari) (1987) (020EFE25).a78.",
+    "",
+    "Every human judgement about this ROM lives in this file; the",
+    "generated listings are disposable, so renaming is free.",
+    "",
+    "What to do next, roughly in order:",
+    "",
+    "  1. python tools/disasm.py Centipede (NTSC) (Atari) (1987) (020EFE25).a78 -c annotations.json",
+    "     Read the coverage it reports. Low coverage is normal at",
+    "     first and is the number you are trying to move.",
+    "",
+    "  2. Every unresolved indirect jump it reports is a hole. Add the",
+    "     target to `entries`, or the pointer pair to `ram_vectors` if",
+    "     the handler is installed into RAM.",
+    "",
+    "  3. python tools/audiotrace.py Centipede (NTSC) (Atari) (1987) (020EFE25).a78 -c annotations.json",
+    "     Finds the sound code and the tables feeding it.",
+    "",
+    "  4. Name things in `labels` as soon as you know what they are.",
+    "",
+    "See docs/method.md for the working order and docs/pitfalls.md for",
+    "the traps that each cost real time."
+  ],
+  "entries": [
+    "rom:C2AB",
+    "rom:D800",
+    "rom:D804"
+  ],
+  "ram_vectors": [],
+  "bankat": {},
+  "labels": {
+    "rom:C2AB": "ENTRY_Irq",
+    "rom:D800": "ENTRY_Nmi",
+    "rom:D804": "ENTRY_Reset"
+  },
+  "ram": {},
+  "comments": {},
+  "headers": {
+    "rom:C000": "chr_rom_C000. CONFIRMED (not guessed): both writers of CHARBASE (rom:D88D, rom:EC75) load #$C0 immediately before the write, so this is the real indirect-mode character set base, not just a visual match. gfx.py's default indirect-mode render at $C000 shows a readable digit/letter set followed by recognizable game sprites (mushrooms, centipede segments) -- consistent with the usual Atari convention of packing the font and small object graphics into the same 256-entry character sheet. CONFIRMED LIVE (tools/live-slots.lua, run-01.inp, 53700 frames -- standard and novice games, all enemy types, poison-mushroom erratic movement, extra lives, the bottom-of-screen looping/multi-head spawn): the live display lists reference many addresses from $C804 through $CEE4, right up against sub_CEE5 (real code, already reached) with no gap -- extended the block's end from the original 2048-byte guess to $CEE5 on that evidence. The '©1984 ATARI' copyright text renders inside this same range when read as an indirect-mode grid, alongside more enemy sprite fragments (spider, flea, scorpion pieces) -- one continuous character/sprite sheet, not two.",
+    "rom:D000": "GameSpritesB. CONFIRMED LIVE (tools/live-slots.lua, run-01.inp, same session as chr_rom_C000): a second, separate direct-mode sprite sheet, referenced from all 8 line-planar pages ($D000, $D100, ... $D700 -- the classic base+n*256 pattern for an 8-line-tall object) with real widths seen at every page, not a guess from byte patterns alone. Sits between chr_rom_C000 and ENTRY_Nmi (already-confirmed real code at $D800) with no gap either side. Not yet identified by content (which enemy or effect these specific graphics belong to) -- that needs a screenshot cross-check against a chosen frame's live display list, not attempted this pass.",
+    "rom:F4F2": "The $F4F2-$FFFF gap. Investigated two ways this session: (1) a PC-tagged read-tap on the whole range (tools/probe-gap-readers.lua, run-01.inp, 1,183,549 hits) -- every representative top-hit PC checked resolved to either a busy-wait loop (rom:D861 BIT ram_2108/BMI L_D861) or an address that falls inside the already-confirmed chr_rom_C000 block (impossible as a real 6502 PC) -- i.e. MARIA DMA misattribution artifacts, not real readers (see docs/pitfalls.md in the toolkit). Trial entries at rom:F900 and rom:F902 both failed to produce a sustained instruction trace. (2) tools/live-slots.lua's own display-list walk -- the same live method that confirmed chr_rom_C000 and GameSpritesB -- found three genuine runtime-constructed graphics-object references landing inside this range: $FE0C (width 31), $FE64 (width 30), $FF24 (width 17); see the gfx_FE0C/gfx_FE64/gfx_FF24 blocks. Conclusion: this is a graphics region, not unreached code -- but run-01.inp only exercised a small fraction of it (3 confirmed starts out of 2830 bytes), so most of the range stays an honest, unconfirmed gap rather than a guessed block. A recording that reaches more enemy/bonus varieties, or 2-player mode, would likely close more of it."
+  },
+  "blocks": [
+    {
+      "loc": "rom:C000",
+      "end": "rom:CEE5",
+      "gfx": true,
+      "name": "chr_rom_C000",
+      "note": "Character set + small object sprites, indirect-mode. See the header note for how the base address and full extent were confirmed live, not guessed."
+    },
+    {
+      "loc": "rom:D000",
+      "end": "rom:D800",
+      "gfx": true,
+      "name": "GameSpritesB",
+      "note": "Second sprite sheet, direct-mode, all 8 line-planar pages confirmed live. See the header note."
+    },
+    {
+      "loc": "rom:FE0C",
+      "end": "rom:FE2B",
+      "gfx": true,
+      "name": "gfx_FE0C",
+      "note": "CONFIRMED LIVE (tools/live-slots.lua, run-01.inp): a display list built at runtime referenced this exact ROM address as a direct-mode object graphic, width 31 (the widest a single MARIA object entry can encode). Raw bytes at this address also happen to contain a byte pair that decodes as a plausible-looking JMP into already-confirmed code -- a coincidence, not evidence of code: any 2-byte value in $C000-$FFFF has decent odds of looking like a valid JMP target in a ROM this densely populated with real code, and the live DL reference is the stronger, dynamic evidence. Not yet identified by content. See the $F4F2-$FFFF gap note below."
+    },
+    {
+      "loc": "rom:FE64",
+      "end": "rom:FE82",
+      "gfx": true,
+      "name": "gfx_FE64",
+      "note": "CONFIRMED LIVE, same run and same caveat as gfx_FE0C (width 30). Not yet identified by content."
+    },
+    {
+      "loc": "rom:FF24",
+      "end": "rom:FF35",
+      "gfx": true,
+      "name": "gfx_FF24",
+      "note": "CONFIRMED LIVE, same run and same caveat as gfx_FE0C (width 17). Not yet identified by content."
+    },
+    {
+      "loc": "rom:FFFA",
+      "end": "rom:10000",
+      "name": "InterruptVectors",
+      "note": "The standard 6502 NMI/RESET/IRQ vector table. Bytes read back as $D800/$D804/$C2AB, which match ENTRY_Nmi/ENTRY_Reset/ENTRY_Irq exactly -- confirmed by agreement, not guessed."
+    }
+  ],
+  "notes": {
+    "rom": "Centipede (NTSC) (Atari) (1987) (020EFE25).a78\nmapper linear, 16 KB, NTSC\nno POKEY declared; audio is the TIA's two voices\n\nVectors: IRQ $C2AB  NMI $D800  RESET $D804\n\nWritten by init.py. Everything here is read from the cartridge; the\njudgement calls are yours to add."
+  }
+}
