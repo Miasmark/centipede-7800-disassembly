@@ -165,6 +165,16 @@ matching `ENTRY_Nmi`/`ENTRY_Reset`/`ENTRY_Irq` exactly.
 
 ## Gameplay logic: main loop, score, and the extra-life mechanism
 
+**Note (added later, see "A reference cross-check" below):** several names
+and interpretations in this section turned out to be wrong --
+`ScoreDigitsA/B/C/D` (now `Score0/1/2Team/3Extra`), `ExtraLifeAwardCount`
+(now `LivesRemaining`), and `CentipedeSegRow`/`CentipedeSegCol` (now
+`ObjectStatus`/`ObjectDir` -- they were never position data). Left as
+originally written rather than silently edited, per this project's own
+discipline of retracting in place, not rewriting history; read the
+mechanisms below for the shape of the reasoning, and the later section for
+what was actually true.
+
 Prompted by an explicit request to start tracing gameplay logic (rather than
 just the memory map). Two tools were used together: static reading of the
 now-larger traced-code region, and `tools/probe-ram-snapshots.lua` -- a new
@@ -322,16 +332,94 @@ and coverage went up slightly (58.5% -> 58.9%) from a previously-missed
 mixed-register vector write in that ROM as well -- a pure improvement, not
 just a neutral one.
 
+## A reference cross-check, and what it changed
+
+The user pointed at a GitHub repository (`videogamepreservation/centipede-7800`)
+containing what turned out to be GCC's actual original 1984 assembly source
+for this game -- not a disassembly, the real developer source, 24 files,
+preserved (apparently without official authorization; no license file, no
+README) in a community archive of commercial game source trees. That
+repository's own contents are **not** reproduced, quoted, or redistributed
+anywhere in this project -- no filenames, no identifier names, no comments
+from it appear verbatim below or in `annotations.json`. It was read privately,
+used to check specific claims already made in this document against a
+ground truth, and every correction below was then **independently
+re-derived from our own `rom.asm`** before being written down -- the same
+"confirm on hardware, not from a claim" discipline this whole project has
+followed, just with a new kind of claim to confirm against. Where a
+correction is noted as reference-only (not independently re-verified this
+pass), that's said explicitly rather than presented as equally solid.
+
+This was worth doing: it caught real, confidently-stated mistakes.
+
+**The centipede-segment arrays were misread.** `ObjectStatus` and
+`ObjectDir` (`$00D0`/`$00E2`, renamed from `CentipedeSegRow`/`CentipedeSegCol`)
+were never row/column position data -- they're a status-bits byte
+(alive/poisoned/head/turn-stage flags) and a direction/graphics-offset
+encoding, for an 18-slot object table shared by the centipede, spider,
+flea/scorpion, the player's shooter, and its shot. The theory that they were
+positions was pattern-matched from live churn alone and never independently
+checked against what the bits actually meant. The *real* per-object pixel
+position, `ObjectX`/`ObjectY` (`$005C`/`$006E`), had been touched only in
+passing before. Verified independently: `rom:F30A`'s exact instruction
+sequence (`AND #$FC / CMP #$4C / ... / ORA #$E7` acting on `ObjectStatus`,
+preceded by reads of `ObjectX`/`ObjectY`) is the poison-mushroom collision
+check -- **`ObjectStatus` bit 6 is the poison flag**, set on colliding with
+a specific mushroom tile value, and it forces the segment into continuous
+turning elsewhere in the same routine. That's the mechanism behind the
+erratic downward movement the user described watching -- not a separate,
+still-undiscovered system, just bits on the array we already had our hands
+on and had mislabeled.
+
+**The bottom-loop multi-head-spawn mechanic is now understood, not just
+suspected.** `NewHeadCount`/`NewHeadTimer`/`NewHeadFlag` (`$2112`/`$2114`/
+`$2115`) drive it: a head reaching the bottom row sets the flag, a timer
+counts down, and at zero a new head spawns into a free object-table slot,
+with the count shrinking (spawns arriving faster) as the game progresses.
+Independently spotted in our own listing at `rom:C7BE` (the
+seed-timer/clear-flag pattern) and `rom:DDE2`/`rom:D907` (the
+difficulty-dependent speed-up). The earlier candidate for this mechanic,
+`rom:C825`'s segment-count-mismatch branch, is a related but different
+piece of logic -- not the spawn routine itself.
+
+**`ram_2129`'s bit 6 pulses are mushroom restoration**, not an
+unidentified "notable event" -- during certain wave transitions, empty
+mushroom-field cells get refilled, matching the six ~1-second pulses
+observed live earlier this session.
+
+**Score storage was structurally mischaracterized.** `Score0`/`Score1`/
+`Score2Team`/`Score3Extra` (renamed from `ScoreDigitsA/B/C/D`) are four
+separate 3-byte BCD numbers (player-0 score, player-1 score, a 2-player
+co-op team score, and a spare block for the high-score cart), not four BCD
+digit-places shared across three player slots -- the X=0..2 index seen in
+the arithmetic selects a byte *within* one number, not a player.
+`LivesRemaining` (`$210E`, renamed from `ExtraLifeAwardCount`) is exactly
+that -- current lives, capped at 6 -- not a count of bonuses awarded; the
+live behavior already observed (moving through 0/1/2 across the session)
+was consistent with the correct field the whole time, just named for the
+wrong reason.
+
+**Not independently re-verified, flagged as reference-only**: `ram_2122`
+is likely a game-type/mode selector (1P/2P variants), not the "current
+player turn index" guessed earlier -- consistent with staying flat at 0 for
+this entire 1-player recording, but for a different reason than assumed.
+This one is taken on the reference's word, not re-derived from our own code
+this pass, and is marked that way in `annotations.json`.
+
+There's also a full mushroom-field layout in the reference (a per-cell
+character-index map sized for a 24-zone, 31-column playfield, living
+somewhere past `$2200` in RAM, directly interpreted through `chr_rom_C000`'s
+character sheet) that hasn't been checked against our own ROM at all yet --
+worth a live probe next, not written down as a finding here since it's
+reference-only so far.
+
 ## What's still open
 
-* Poison-mushroom state specifically (see above -- `ram_005C,X` is a
-  candidate, not confirmed) and the mushroom sprites' own graphic identity.
-* The bottom-of-screen multi-head-spawn branch (`rom:C825`) is a strong
-  static candidate but hasn't been confirmed against a live frame where it
-  actually fires.
-* `CentipedeSegRow`/`CentipedeSegCol` still don't explain the *shape* of
-  centipede movement (the left-right weave, the turn-at-a-wall/mushroom
-  behavior) -- only where each segment currently is.
+* The mushroom-field RAM layout itself (see above) -- a strong reference-only
+  lead, not yet independently confirmed against this ROM's own RAM.
+* `ObjectStatus`/`ObjectDir`'s exact bit-by-bit meaning beyond the poison
+  flag (turn-stage, bounce, fast-segment bits) -- named generically for now,
+  not bit-mapped.
 * Six small scattered gaps remain, 653 bytes total (`$C946`-`$C9A7` down to
   `$CFFB`-`$CFFF`) -- two of them (`$E9AD`-`$E9BB`, `$CFFB`-`$CFFF`) have no
   live or static evidence at all pointing to either code or data, genuinely
