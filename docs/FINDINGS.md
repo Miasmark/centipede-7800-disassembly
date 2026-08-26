@@ -292,19 +292,35 @@ code, including a *second*, previously-unknown target for the
 `ram_00F4`/`ram_00F5` NMI-vector pair (`$ED64`, on top of the already-known
 `$C298` and `$ED45`).
 
-`disasm.py`'s `scan_ram_vectors` only tracks `LDA #imm / STA` pairs, and the
-`$ED64` writer uses `LDA`+`LDY` into `STA`+`STY` (a mixed-register form the
-scanner doesn't follow), so declaring `ram_vectors` for `$F4`/`$F5` wasn't
-enough by itself -- `$ED45` and `$ED64` were also added to `entries`
-directly. The unlocked code turned out to be a two-handler DLI ping-pong
-chain (`VEC_ED45` / `sub_ED64`), the same mechanism Ballblazer used: each
-handler sets a different `CTRL`/`CHARBASE` pair (`$C1` vs `$39`) and
-re-arms the *other* handler for the next interrupt, then one of them calls
-`sub_CD16` -- the zone-slot allocator mentioned above. This recovered 519
-bytes of real code in one fix, including the centipede-renders-itself
-confirmation. Lesson generalizes past this ROM: a RAM-vector scan is only as
-complete as the register forms it looks for; a mixed LDA/LDY writer needs
-manual entries the way a pure-LDA one wouldn't.
+`disasm.py`'s `scan_ram_vectors` only tracked `LDA #imm / STA` pairs at the
+time, and the `$ED64` writer uses `LDA`+`LDY` into `STA`+`STY` (a
+mixed-register form the scanner didn't follow), so declaring `ram_vectors`
+for `$F4`/`$F5` wasn't enough by itself at first -- `$ED45` and `$ED64` were
+added to `entries` by hand as an immediate, working fix. The unlocked code
+turned out to be a two-handler DLI ping-pong chain (`VEC_ED45` /
+`VEC_ED64`), the same mechanism Ballblazer used: each handler sets a
+different `CTRL`/`CHARBASE` pair (`$C1` vs `$39`) and re-arms the *other*
+handler for the next interrupt, then one of them calls `sub_CD16` -- the
+zone-slot allocator mentioned above. This recovered 519 bytes of real code
+in one fix, including the centipede-renders-itself confirmation.
+
+**Fixed at the root afterward, in the toolkit itself.** The hand-added
+`entries` worked but left the actual cause -- a RAM-vector scan only as
+complete as the register forms it looks for -- as a latent gap that would
+bite the next project the same way. `scan_ram_vectors` now tracks A/X/Y
+independently (each register's last `LD{A,X,Y} #imm` value, matched against
+any `ST{A,X,Y}` to the vector address, cleared by anything that loads that
+register other than an immediate -- deliberately not trying to track values
+through arithmetic, to stay exactly as conservative as the original
+A-only version rather than trading a narrow miss for a new false-positive
+risk). With the fix in place, the manual `rom:ED45`/`rom:ED64` entries were
+removed from `annotations.json` -- the `ram_vectors` declaration alone now
+finds all three targets (`$C298`, `$ED45`, `$ED64`) automatically, same gap
+count, round-trip still passes. Checked for regressions against Ballblazer
+too (the toolkit's other completed project): round-trip still passes there,
+and coverage went up slightly (58.5% -> 58.9%) from a previously-missed
+mixed-register vector write in that ROM as well -- a pure improvement, not
+just a neutral one.
 
 ## What's still open
 
