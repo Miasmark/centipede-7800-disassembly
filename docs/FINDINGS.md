@@ -334,21 +334,26 @@ just a neutral one.
 
 ## A reference cross-check, and what it changed
 
-The user pointed at a GitHub repository (`videogamepreservation/centipede-7800`)
-containing what turned out to be GCC's actual original 1984 assembly source
-for this game -- not a disassembly, the real developer source, 24 files,
-preserved (apparently without official authorization; no license file, no
-README) in a community archive of commercial game source trees. That
-repository's own contents are **not** reproduced, quoted, or redistributed
-anywhere in this project -- no filenames, no identifier names, no comments
-from it appear verbatim below or in `annotations.json`. It was read privately,
-used to check specific claims already made in this document against a
-ground truth, and every correction below was then **independently
-re-derived from our own `rom.asm`** before being written down -- the same
-"confirm on hardware, not from a claim" discipline this whole project has
-followed, just with a new kind of claim to confirm against. Where a
-correction is noted as reference-only (not independently re-verified this
-pass), that's said explicitly rather than presented as equally solid.
+With the independent investigation well advanced, a privately-held
+historical source for this game was consulted -- and it turned out to be
+better than a disassembly: the original 1984 developer assembly source, 24
+files, held in a community archive of commercial source trees apparently
+without official authorization.
+
+It was used under the discipline the sibling projects settled on: as a
+*check only*, never as the origin of a finding, never quoted or copied into
+this repo. None of its contents are reproduced or redistributed here -- no
+filenames, no identifier names, no comments from it appear verbatim below or
+in `annotations.json`. It was read privately, used to test claims this
+document had already made, and every correction below was then
+**independently re-derived from this project's own `rom.asm`** before being
+written down: the same "confirm against the ROM, not against a claim"
+discipline as the rest of the work, with a new kind of claim to confirm.
+Development source is not necessarily the shipped product either, so a
+disagreement is a question to settle against the ROM rather than an
+automatic correction. Where a correction is reference-only -- not
+independently re-verified this pass -- that is said explicitly rather than
+presented as equally solid.
 
 This was worth doing: it caught real, confidently-stated mistakes.
 
