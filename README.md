@@ -54,7 +54,7 @@ python3 ../a7800-toolkit/tools/disasm.py "Centipede (NTSC) (Atari) (1987) (020EF
 ![Coverage map](docs/img/coverage-map.png)
 
 The remaining gap is mostly one sparsely-touched graphics tail
-(`$F4F2`-`$FFFF`) plus a still-unresolved chunk around `$C9BD`-`$CD15` --
+(`$F4F2`-`$FFFF`) plus a still-unresolved chunk around `$CA27`-`$CD0F` --
 see `docs/FINDINGS.md` for two separate retractions worth reading before
 trusting a stale copy of this page: an earlier, wrong graphics-block
 boundary caught while tracing gameplay logic, and a second RAM-vector bug

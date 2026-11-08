@@ -11,13 +11,19 @@ python3 ../a7800-toolkit/tools/disasm.py "Centipede (NTSC) (Atari) (1987) (020EF
 python3 ../a7800-toolkit/tools/verify.py "Centipede (NTSC) (Atari) (1987) (020EFE25).a78" -d src
 ```
 
-Static coverage is **50.9%** as traced code (8332/16384 bytes), plus
-6315 bytes of declared data blocks -- **89.4%** accounted for overall, 3737
+Static coverage is **53.8%** as traced code (8822/16384 bytes), plus
+3957 bytes of declared data blocks -- **78.0%** accounted for overall, 3605
 bytes left as an honest gap (this number has moved around across passes,
 occasionally *up*, as wrong claims got caught and reverted -- see the
 retraction below; treat "% accounted for" as a proxy for "well-understood",
 not a monotonic score to chase). Round-trip is byte-identical throughout
 everything documented here.
+
+*Corrected 2026-11-08:* this paragraph read 50.9% code (8332 bytes), 6315
+bytes of data blocks and 89.4% accounted for, with a 3737-byte gap. The data
+figure didn't add up: 16384 - 8332 - 3737 is 4315, so the true figure was
+77.2%. The new numbers come from the page-tail correction below
+("Correction: the character sheet is eight half-pages").
 
 Vectors: `IRQ $C2AB` `NMI $D800` `RESET $D804`.
 
@@ -51,10 +57,17 @@ plus the widest object seen there.
 
 | block | range | mode | how confirmed |
 |---|---|---|---|
-| `chr_rom_C000` | `$C000`-`$C2AA` | indirect | `CHARBASE` confirmed by code, not guess: both writers (`$D88D`, `$EC75`) load `#$C0` immediately before the write. |
-| `chr_rom_C2AC` | `$C2AC`-`$C797` | indirect | Continuation of the same sheet, resuming right after `ENTRY_Irq`'s single-byte `RTI` (see the retraction below for why this is two blocks, not one). |
-| `gfx_C9A8`, `gfx_CEC6` | `$C9A8`+21, `$CEC6`+31 | indirect | Two small confirmed fragments in the otherwise-unclaimed `$C946`-`$CEE4` gap; `gfx_CEC6` runs exactly up to `sub_CEE5` (real code) with zero padding. |
+| `chr_rom_C000` ... `chr_rom_C700` | `$Cn00`-`$Cn97` in each page `$C0`-`$C7` | indirect | `CHARBASE` confirmed by code, not guess: both writers (`$D88D`, `$EC75`) load `#$C0` immediately before the write. Only bytes `$00`-`$97` of each page are tiles; bytes `$98`-`$FF` are code and tables (corrected 2026-11-08, see below). |
+| `gfx_CEC6` | `$CEC6`+31 | indirect | A small fragment in the otherwise-unclaimed `$C946`-`$CEE4` gap; runs exactly up to `sub_CEE5` (real code) with zero padding. Rests on a display-list header address only (see the 2026-11-08 note in "The `$C946`-`$CEE4` gap"). |
 | `GameSpritesB` | `$D000`-`$D7FF` | direct | A second sheet, referenced from all 8 line-planar pages (`$D000`, `$D100`, ... `$D700` -- the standard base+n*256 layout for an 8-line-tall object), real widths seen at every page. Sits between `chr_rom_C2AC` and `ENTRY_Nmi` (`$D800`) with no gap either side. |
+
+*Corrected 2026-11-08:* this table used to list `chr_rom_C000` as
+`$C000`-`$C2AA` and `chr_rom_C2AC` as `$C2AC`-`$C797`, two solid blocks
+either side of `ENTRY_Irq`, and `gfx_C9A8` (`$C9A8`+21) as a confirmed
+fragment. All three were wrong: the two sheets covered code and tables in
+every page tail, and `gfx_C9A8` sat inside the sound tick. See
+"Correction: the character sheet is eight half-pages" and the
+`$C946`-`$CEE4` section below.
 
 Neither sheet's *content* (which enemy or effect belongs to which sprite)
 is identified yet -- that needs a screenshot cross-check against a specific
@@ -95,6 +108,64 @@ This is now a toolkit-level pitfall
 (`a7800-toolkit/docs/pitfalls.md`, "A `gfx`/data block silently overrides
 `entries`, even at a confirmed vector") since nothing about it is specific
 to Centipede: any `blocks` entry can hide an entry point the same way.
+
+*Corrected 2026-11-08:* `ENTRY_Irq` is not an isolated one-byte code
+island. It is the closing `RTI` of the first DLI handler, `VEC_C298`
+(`$C298`-`$C2AB`: `... PLA / RTI`), so the IRQ vector reuses that
+handler's last byte. The two-block split was still wrong too; see the next
+section.
+
+## Correction: the character sheet is eight half-pages
+
+Added 2026-11-08, after a review of the techniques mined from this and the
+sibling disassemblies flagged it. Code-read from the ROM bytes and a
+regenerated listing; not checked live.
+
+The two blocks either side of `ENTRY_Irq` still hid code. The sheet is the
+eight line pages `$C000`-`$C7FF` (`CHARBASE` `$C0`), but each page holds
+tiles only in bytes `$00`-`$97`. Bytes `$98`-`$FF` of every page are code
+or tables, and nothing but MARIA reads `$00`-`$97`: every label, table
+base and call target in the range lands at `$98` or above. The tails hold:
+
+| tail | what | evidence |
+|---|---|---|
+| `$C098`-`$C0FD` | zone tables: hi/lo bytes of the 24 zone display lists (`$C098`/`$C0B0`), hi/lo bytes of 23 rows of the character map at `$24AA` (`$C0C8`/`$C0DF`), bit masks (`$C0F6`) | read by `sub_CD68`, `sub_DB6C`, `sub_DA3D`, `$DCC2`, `$C857` |
+| `$C198`-`$C1F6` | `dat_C198`, the DLL template | `$D88F`-`$D8A0` copies 95 bytes to `$1F38` and points `DPPH`/`DPPL` there |
+| `$C298`-`$C2F2` | the DLI chain, three stages: `VEC_C298` -> `VEC_C2AC` -> `VEC_C2DA` -> `VEC_C298` | `ENTRY_Nmi` is `PHA / JMP ($00F4)`; each stage stores the next one's address in `$F4`/`$F5` |
+| `$C398`-`$C3FC` | `sub_C398`, writes the score digits into the character map | called from DLI stage 2 |
+| `$C498`-`$C4DB` | `sub_C498`, the palette loader: copies 12 bytes from `$F4F2`+`ram_211F,X` into palettes 6 down to 3 (fewer when `ram_1FD1` is above 0) | called from DLI stage 2 and from `$EDA1` |
+| `$C598`-`$C5F4`, `$C698`-`$C6FB` | message text in character indices (`$40` = blank) and their pointer tables, plus two small 3-entry tables | read at `$D9B8`, `$D99A`, `$D9D3`, `$E5A6`, `$E613`, `$E636`, `$E7CF`, `$EA32`, `$EA62` |
+| `$C798`- | `sub_C798` onward, the code already known | |
+
+DLI stage 2 also carries the frame's work: `sub_CEE5`, `sub_C398`,
+`sub_CD10` (the zone rebuild, which runs only when the main loop has set
+`ram_2108` bit 7 and clears it at `$CEB2` -- so the guess in "Main loop"
+below, "presumably cleared by the display-list interrupt chain", was
+right), `sub_C498` and `sub_C946` (the sound tick, below). The DLL
+template has three DLI-flagged entries, one per stage.
+
+The tool had been pointing at this all along: run on the old blocks,
+today's `disasm.py` prints "2 traces ran into a declared data block and
+stopped there (first: rom:C298, rom:C498)". The "dense live display-list
+refs on both sides of the IRQ byte" that confirmed the old split were
+header addresses, which show where objects start, not that every byte
+between them is graphics.
+
+Now declared as eight 152-byte `gfx` blocks (`chr_rom_C000` ...
+`chr_rom_C700`) plus data blocks for the tables. The DLI chain and the
+routines are reached by the `ram_vectors` scan and their own `JSR`s, with no
+manual entries. Coverage went from 50.9% to 53.8%. The last few bytes of
+some tails (`$C0FE`-`$C0FF`, `$C1F7`-`$C1FF`, `$C2F3`-`$C2FF`,
+`$C3FD`-`$C3FF`, `$C4DC`-`$C4FF`, `$C5F5`-`$C5FF`, `$C6FC`-`$C6FF`, 78
+bytes) have no reader found and stay gaps.
+
+Two leads from this pass, not followed up: the palette loader's colour
+rows (`$F4F2`) and the sound tick's tables (`$F582`-`$F5C1`) sit at the
+start of the `$F4F2`-`$FFFF` "graphics region" below; and `sub_C398`
+reads each score as three bytes 7 apart (`$008E`, `$0087`, `$0080` for
+slot 0, high byte first), the same order as `sub_DDA9`'s `ADC` chain,
+which does not fit the score-storage correction in "A reference
+cross-check" below. Neither was re-checked here.
 
 ## The `$F4F2`-`$FFFF` tail: data, not missed code
 
@@ -156,6 +227,33 @@ honest, unconfirmed gap on the same reasoning as `$F4F2`-`$FFFF` (a later
 pass, below, reclaimed `$CD16`-`$CEB5` of it as real code once a RAM-vector
 bug was fixed elsewhere -- `$C946`-`$C9A7` and `$CEB6`-`$CEC5` are still
 open).
+
+*Corrected 2026-11-08 (code-read from the ROM bytes, not live):*
+`$C946`-`$C9A7` was never a gap, and `gfx_C9A8` was not graphics.
+`$C946` is `sub_C946`, the per-frame sound tick, called from DLI stage 2
+(`$C2D1`) and running to its `RTS` at `$CA26`. It steps both TIA voices
+through the current effect's streams: frequency streams through the
+pointer tables at `$F582`/`$F58A`, `AUDV` streams at `$F592`/`$F59A`,
+`AUDC` streams at `$F5A2`/`$F5AA`, default durations at `$F5B2`. In the
+frequency stream `$FF` ends the effect, `$FE` restarts it, `$FD nn` chains
+to effect `nn`, and a byte with bit 7 set is followed by an explicit
+duration; in the `AUDV`/`AUDC` streams bit 7 holds the value. Effect 5
+resumes from a position saved in `$277D` when its voice was stolen
+(`$C92E` saves, `$C975` restores). The "confirmed live" `gfx_C9A8` block
+began on this routine's `CMP #$FF` at `$C9A8` and has been removed;
+nothing reached it before because the old `chr_rom_C2AC` block hid DLI
+stage 2, its only caller.
+
+Why the live walk named `$C9A8` anyway: `tools/live-slots.lua` records
+each display-list header's address field, not bytes MARIA was seen to
+fetch, and this game's headers need not point at the bytes they draw --
+the object placer writes `$C0`+fine for an object's upper zone and an
+address 8 pages lower for the zone below (`$CDF5`-`$CDF9`). So a header
+address is not evidence that the bytes there are graphics. Which builder
+wrote the `$C9A8` header was not traced. The same caveat applies to the
+other blocks that rest on this walk alone (`gfx_CEC6` here, and `gfx_FE0C`,
+`gfx_FE64` and `gfx_FF24` in the tail above); they were not re-checked in
+this pass. What stays open here is `$CA27`-`$CD0F` and `$CEB6`-`$CEC5`.
 
 ## The interrupt vector table
 
@@ -425,10 +523,14 @@ reference-only so far.
 * `ObjectStatus`/`ObjectDir`'s exact bit-by-bit meaning beyond the poison
   flag (turn-stage, bounce, fast-segment bits) -- named generically for now,
   not bit-mapped.
-* Six small scattered gaps remain, 653 bytes total (`$C946`-`$C9A7` down to
-  `$CFFB`-`$CFFF`) -- two of them (`$E9AD`-`$E9BB`, `$CFFB`-`$CFFF`) have no
-  live or static evidence at all pointing to either code or data, genuinely
-  open rather than just unexamined.
+* Eleven gaps remain outside the `$F4F2`-`$FFFF` tail, 859 bytes total:
+  `$CA27`-`$CD0F` (745), `$CEB6`-`$CEC5`, `$E9AD`-`$E9BB`, `$CFFB`-`$CFFF`,
+  and the seven page-tail leftovers in `$C0FE`-`$C6FF` (78) -- two of them
+  (`$E9AD`-`$E9BB`, `$CFFB`-`$CFFF`) have no live or static evidence at all
+  pointing to either code or data, genuinely open rather than just
+  unexamined. (*Corrected 2026-11-08:* this item read "six small scattered
+  gaps, 653 bytes, `$C946`-`$C9A7` down to `$CFFB`-`$CFFF`"; `$C946`-`$C9A7`
+  turned out to be the sound tick.)
 * Per-enemy-type behavior (spider, flea, scorpion) and the
   novice-vs-standard gameplay difference are still untraced.
 * 2-player mode is entirely unexercised by any recording so far, which
